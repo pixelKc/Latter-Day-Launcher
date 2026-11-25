@@ -23,16 +23,34 @@ import java.util.regex.Pattern;
  * All methods do network I/O: call them from a background thread only.
  */
 public final class LessonImageFetcher {
+    // Set to a date to test, or null for real time. Remove before release.
+    private static Calendar TEST_NOW = null;
+    // e.g. TEST_NOW = midnight(2027, Calendar.JANUARY, 1);
 
-    private static final String BASE =
-            "https://www.churchofjesuschrist.org/study/manual/"
-                    + "come-follow-me-for-home-and-church-old-testament-2026/%02d?lang=eng";
+    private static Calendar now() {
+        return TEST_NOW != null ? (Calendar) TEST_NOW.clone() : Calendar.getInstance();
+    }
+
+    private static final String BASE_PREFIX =
+            "https://www.churchofjesuschrist.org/study/manual/";
+    private static final String BASE_SUFFIX = "/%02d?lang=eng";
+
+    private static final String MANUAL_OLD =
+            "come-follow-me-for-home-and-church-old-testament-2026";
+    private static final String MANUAL_NEW =
+            "come-follow-me-for-home-and-church-new-testament-2027";
 
     private static final String USER_AGENT =
             "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 "
                     + "(KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36";
 
-    // Date lesson 1 begins (a Monday): 2025-12-29. Adjust if "current" is off by a week.
+    // On this date (a Monday) the app switches to the new manual and restarts at lesson 1.
+    // Adjust if "current" is off by a week.
+    private static final int SWITCH_YEAR = 2026;
+    private static final int SWITCH_MONTH = Calendar.DECEMBER;
+    private static final int SWITCH_DAY = 28;
+
+    // Date lesson 1 of the old manual begins (a Monday): 2025-12-29.
     private static final int START_YEAR = 2025;
     private static final int START_MONTH = Calendar.DECEMBER;
     private static final int START_DAY = 29;
@@ -49,17 +67,30 @@ public final class LessonImageFetcher {
 
     private LessonImageFetcher() {}
 
+private static Calendar midnight(int year, int month, int day) {
+    Calendar c = Calendar.getInstance();
+    c.clear(); // zeroes hour/minute/second/millisecond too
+    c.set(year, month, day);
+    return c;
+}
+
+/** True on or after the switch date (device's local time zone). */
+private static boolean useNewManual() {
+    return !now().before(midnight(SWITCH_YEAR, SWITCH_MONTH, SWITCH_DAY));
+}
+
     public static String buildUrl(int lesson) {
-        return String.format(Locale.US, BASE, lesson);
+        String manual = useNewManual() ? MANUAL_NEW : MANUAL_OLD;
+        return String.format(Locale.US, BASE_PREFIX + manual + BASE_SUFFIX, lesson);
     }
 
     /** Lesson number for today, clamped to 1..MAX_LESSON. Works on all Android versions. */
     public static int currentLesson() {
-        Calendar start = Calendar.getInstance();
-        start.clear();
-        start.set(START_YEAR, START_MONTH, START_DAY);
+        Calendar start = useNewManual()
+                ? midnight(SWITCH_YEAR, SWITCH_MONTH, SWITCH_DAY)
+                : midnight(START_YEAR, START_MONTH, START_DAY);
 
-        Calendar today = Calendar.getInstance();
+        Calendar today = now();
         today.set(Calendar.HOUR_OF_DAY, 0);
         today.set(Calendar.MINUTE, 0);
         today.set(Calendar.SECOND, 0);
