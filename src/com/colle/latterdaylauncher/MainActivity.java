@@ -56,6 +56,7 @@ public class MainActivity extends Activity implements Runnable, View.OnClickList
     private static final String PREFS = "launcher_prefs";
     private static final String KEY_ORDER = "app_order";
     private static final int REORDER_COLOR = 0xFF3D7BFF;
+    private static final boolean DEBUG = true;
 
     private ImageView bgImageView;
     private LinearLayout inputsRow;
@@ -698,6 +699,12 @@ public class MainActivity extends Activity implements Runnable, View.OnClickList
                     inputsRow.addView(createTile(label, icon, info, null));
                 }
             }
+        }
+
+        if (DEBUG && inputsRow.getChildCount() == 0) {
+            Drawable icon = getResources().getDrawable(android.R.drawable.ic_menu_slideshow);
+            inputsRow.addView(createTile("HDMI 1", icon, null, null));
+            inputsRow.addView(createTile("HDMI 2", icon, null, null));
         }
 
         int visibility = (inputsRow.getChildCount() == 0) ? View.GONE : View.VISIBLE;
