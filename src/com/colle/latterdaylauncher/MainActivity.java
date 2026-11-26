@@ -55,6 +55,7 @@ public class MainActivity extends Activity implements Runnable, View.OnClickList
 
     private static final String PREFS = "launcher_prefs";
     private static final String KEY_ORDER = "app_order";
+    private static final String KEY_INPUT_ORDER = "input_order";
     private static final int REORDER_COLOR = 0xFF3D7BFF;
     private static final boolean DEBUG = false;
 
@@ -73,8 +74,11 @@ public class MainActivity extends Activity implements Runnable, View.OnClickList
     private final Random random = new Random();
     private int currentBgIndex = -1;
 
-    // Non-null while the user is moving a tile around
+    // Non-null while the user is moving a tile around.
+    // Holds a package name (apps) or a TV input id (inputs).
     private String reorderPackage = null;
+    // Which row the tile being moved lives in (appsRow or inputsRow)
+    private LinearLayout reorderRow = null;
 
     // True while OK/Enter is physically held down. A long press from the remote
     // sets pendingMenu*, and the menu is shown once the key is released.
@@ -88,6 +92,7 @@ public class MainActivity extends Activity implements Runnable, View.OnClickList
         final String label;
         final GradientDrawable normalBg;
         final GradientDrawable focusedBg;
+        String debugKey = null; // only used by the fake DEBUG input tiles
 
         TileAction(TvInputInfo inputInfo, String packageName, String label,
                    GradientDrawable normalBg, GradientDrawable focusedBg) {
@@ -96,6 +101,15 @@ public class MainActivity extends Activity implements Runnable, View.OnClickList
             this.label = label;
             this.normalBg = normalBg;
             this.focusedBg = focusedBg;
+        }
+
+        // Unique id for reordering: input id for TV inputs, package name for apps,
+        // debugKey for fake debug inputs, null for tiles that can't be reordered
+        // (e.g. the lesson tile)
+        String key() {
+            if (inputInfo != null) return inputInfo.getId();
+            if (packageName != null) return packageName;
+            return debugKey;
         }
     }
 
@@ -125,6 +139,7 @@ public class MainActivity extends Activity implements Runnable, View.OnClickList
         super.onPause();
         handler.removeCallbacks(this);
         reorderPackage = null;
+        reorderRow = null;
         okKeyHeld = false;
         pendingMenuPkg = null;
         pendingMenuLabel = null;
@@ -259,9 +274,7 @@ public class MainActivity extends Activity implements Runnable, View.OnClickList
         tile.setClickable(true);
         tile.setOnClickListener(this);
         tile.setOnFocusChangeListener(this);
-        if (packageName != null) {
-            tile.setOnLongClickListener(this); // only app tiles, not TV inputs
-        }
+        tile.setOnLongClickListener(this); // apps open a menu, TV inputs go straight to reorder
 
         GradientDrawable normalBg = new GradientDrawable();
         normalBg.setColor(0x33FFFFFF);
@@ -330,8 +343,15 @@ public class MainActivity extends Activity implements Runnable, View.OnClickList
         Object tag = v.getTag();
         if (!(tag instanceof TileAction)) return false;
         TileAction action = (TileAction) tag;
-        if (action.packageName == null) return false;
+        if (action.key() == null) return false;
 
+        // TV inputs: no menu, go straight into reorder mode
+        if (v.getParent() == inputsRow) {
+            startReorder(inputsRow, action.key());
+            return true; // consume so releasing the button doesn't also switch input
+        }
+
+        // Apps: show the popup menu
         if (okKeyHeld) {
             // Remote/keyboard long press: wait for the button to be released so the
             // release can't land on a menu button and click it.
@@ -395,7 +415,7 @@ public class MainActivity extends Activity implements Runnable, View.OnClickList
         View first = addMenuButton(box, "Reorder", new Runnable() {
             @Override public void run() {
                 dialog.dismiss();
-                startReorder(pkg);
+                startReorder(appsRow, pkg);
             }
         });
 
@@ -474,24 +494,26 @@ public class MainActivity extends Activity implements Runnable, View.OnClickList
     }
 
     // ---------------------------------------------------------------------
-    // Reorder mode
+    // Reorder mode (works for both the apps row and the TV inputs row)
     // ---------------------------------------------------------------------
 
-    private View findAppTile(String pkg) {
-        for (int i = 0; i < appsRow.getChildCount(); i++) {
-            View c = appsRow.getChildAt(i);
+    private View findTile(LinearLayout row, String key) {
+        if (row == null || key == null) return null;
+        for (int i = 0; i < row.getChildCount(); i++) {
+            View c = row.getChildAt(i);
             Object t = c.getTag();
-            if (t instanceof TileAction && pkg.equals(((TileAction) t).packageName)) {
+            if (t instanceof TileAction && key.equals(((TileAction) t).key())) {
                 return c;
             }
         }
         return null;
     }
 
-    private void startReorder(String pkg) {
-        View tile = findAppTile(pkg);
+    private void startReorder(LinearLayout row, String key) {
+        View tile = findTile(row, key);
         if (tile == null) return;
-        reorderPackage = pkg;
+        reorderRow = row;
+        reorderPackage = key; // package name (apps) or input id (inputs)
         ((TileAction) tile.getTag()).focusedBg.setStroke(dp(3), REORDER_COLOR);
         tile.requestFocus();
         tile.setBackground(((TileAction) tile.getTag()).focusedBg);
@@ -500,37 +522,40 @@ public class MainActivity extends Activity implements Runnable, View.OnClickList
 
     private void endReorder() {
         if (reorderPackage == null) return;
-        View tile = findAppTile(reorderPackage);
+        View tile = findTile(reorderRow, reorderPackage);
         if (tile != null) {
             ((TileAction) tile.getTag()).focusedBg.setStroke(dp(2), Color.WHITE);
             tile.invalidate();
         }
         reorderPackage = null;
+        reorderRow = null;
     }
 
     private void moveReorderTile(int delta) {
-        View tile = findAppTile(reorderPackage);
+        View tile = findTile(reorderRow, reorderPackage);
         if (tile == null) return;
-        int index = appsRow.indexOfChild(tile);
+        int index = reorderRow.indexOfChild(tile);
         int newIdx = index + delta;
-        if (newIdx < 0 || newIdx >= appsRow.getChildCount()) return;
+        if (newIdx < 0 || newIdx >= reorderRow.getChildCount()) return;
 
-        appsRow.removeViewAt(index);
-        appsRow.addView(tile, newIdx);
+        reorderRow.removeViewAt(index);
+        reorderRow.addView(tile, newIdx);
         tile.requestFocus();
         saveOrder();
     }
 
     private void saveOrder() {
+        if (reorderRow == null) return;
         List<String> order = new ArrayList<>();
-        for (int i = 0; i < appsRow.getChildCount(); i++) {
-            Object t = appsRow.getChildAt(i).getTag();
-            if (t instanceof TileAction && ((TileAction) t).packageName != null) {
-                order.add(((TileAction) t).packageName);
+        for (int i = 0; i < reorderRow.getChildCount(); i++) {
+            Object t = reorderRow.getChildAt(i).getTag();
+            if (t instanceof TileAction && ((TileAction) t).key() != null) {
+                order.add(((TileAction) t).key());
             }
         }
+        String prefKey = (reorderRow == inputsRow) ? KEY_INPUT_ORDER : KEY_ORDER;
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                .putString(KEY_ORDER, TextUtils.join(",", order)).apply();
+                .putString(prefKey, TextUtils.join(",", order)).apply();
     }
 
     @Override
@@ -572,7 +597,9 @@ public class MainActivity extends Activity implements Runnable, View.OnClickList
                     return true; // keep focus on the tile being moved
                 case KeyEvent.KEYCODE_DPAD_CENTER:
                 case KeyEvent.KEYCODE_ENTER:
-                    if (down) endReorder();
+                    // Ignore key-repeat: reorder can start while OK is still held
+                    // (long press on a TV input), and repeats must not end it instantly.
+                    if (down && event.getRepeatCount() == 0) endReorder();
                     return true;
                 case KeyEvent.KEYCODE_BACK:
                     if (down) endReorder();
@@ -683,7 +710,25 @@ public class MainActivity extends Activity implements Runnable, View.OnClickList
         TvInputManager tvInputManager = (TvInputManager) getSystemService(Context.TV_INPUT_SERVICE);
 
         if (tvInputManager != null) {
-            List<TvInputInfo> inputs = tvInputManager.getTvInputList();
+            // Copy into a new list so we can sort it
+            List<TvInputInfo> inputs = new ArrayList<>(tvInputManager.getTvInputList());
+
+            // Apply the user's saved order. Sort is stable, so inputs that aren't
+            // in the saved list (e.g. newly connected) stay in system order at the end.
+            String saved = getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_INPUT_ORDER, "");
+            if (!saved.isEmpty()) {
+                final List<String> order = Arrays.asList(saved.split(","));
+                Collections.sort(inputs, new Comparator<TvInputInfo>() {
+                    @Override public int compare(TvInputInfo a, TvInputInfo b) {
+                        int ia = order.indexOf(a.getId());
+                        int ib = order.indexOf(b.getId());
+                        if (ia < 0) ia = Integer.MAX_VALUE;
+                        if (ib < 0) ib = Integer.MAX_VALUE;
+                        return Integer.compare(ia, ib);
+                    }
+                });
+            }
+
             for (TvInputInfo info : inputs) {
                 if (info.getType() != TvInputInfo.TYPE_OTHER || info.isPassthroughInput()) {
                     CharSequence customLabel = info.loadCustomLabel(this);
@@ -703,8 +748,28 @@ public class MainActivity extends Activity implements Runnable, View.OnClickList
 
         if (DEBUG && inputsRow.getChildCount() == 0) {
             Drawable icon = getResources().getDrawable(android.R.drawable.ic_menu_slideshow);
-            inputsRow.addView(createTile("HDMI 1", icon, null, null));
-            inputsRow.addView(createTile("HDMI 2", icon, null, null));
+            List<String> names = new ArrayList<>(Arrays.asList("HDMI 1", "HDMI 2"));
+
+            // Apply the saved order to the debug tiles too
+            String savedDebug = getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_INPUT_ORDER, "");
+            if (!savedDebug.isEmpty()) {
+                final List<String> debugOrder = Arrays.asList(savedDebug.split(","));
+                Collections.sort(names, new Comparator<String>() {
+                    @Override public int compare(String a, String b) {
+                        int ia = debugOrder.indexOf("debug_" + a);
+                        int ib = debugOrder.indexOf("debug_" + b);
+                        if (ia < 0) ia = Integer.MAX_VALUE;
+                        if (ib < 0) ib = Integer.MAX_VALUE;
+                        return Integer.compare(ia, ib);
+                    }
+                });
+            }
+
+            for (String name : names) {
+                View t = createTile(name, icon, null, null);
+                ((TileAction) t.getTag()).debugKey = "debug_" + name;
+                inputsRow.addView(t);
+            }
         }
 
         int visibility = (inputsRow.getChildCount() == 0) ? View.GONE : View.VISIBLE;
@@ -783,116 +848,121 @@ public class MainActivity extends Activity implements Runnable, View.OnClickList
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
+
+    // ---------------------------------------------------------------------
+    // Weekly lesson tile
+    // ---------------------------------------------------------------------
+
     private ImageView createLessonTile() {
-    ImageView iv = new ImageView(this) {
-        private final Path clipPath = new Path();
-        private final RectF clipRect = new RectF();
+        ImageView iv = new ImageView(this) {
+            private final Path clipPath = new Path();
+            private final RectF clipRect = new RectF();
 
-        @Override
-        protected void onDraw(Canvas canvas) {
-            // Clip the picture to a rounded rect just inside the border.
-            // Radius is 8dp (border) minus 3dp (padding) so the curves line up.
-            clipRect.set(getPaddingLeft(), getPaddingTop(),
-                    getWidth() - getPaddingRight(), getHeight() - getPaddingBottom());
-            float r = dp(5);
-            clipPath.reset();
-            clipPath.addRoundRect(clipRect, r, r, Path.Direction.CW);
+            @Override
+            protected void onDraw(Canvas canvas) {
+                // Clip the picture to a rounded rect just inside the border.
+                // Radius is 8dp (border) minus 3dp (padding) so the curves line up.
+                clipRect.set(getPaddingLeft(), getPaddingTop(),
+                        getWidth() - getPaddingRight(), getHeight() - getPaddingBottom());
+                float r = dp(5);
+                clipPath.reset();
+                clipPath.addRoundRect(clipRect, r, r, Path.Direction.CW);
 
-            canvas.save();
-            canvas.clipPath(clipPath);
-            super.onDraw(canvas);
-            canvas.restore();
-        }
-    };
-    iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
-    iv.setPadding(dp(3), dp(3), dp(3), dp(3));
-    iv.setFocusable(true);
-    iv.setClickable(true);
-
-    GradientDrawable normalBg = new GradientDrawable();
-    normalBg.setColor(0x33FFFFFF);
-    normalBg.setCornerRadius(dp(8));
-    GradientDrawable focusedBg = new GradientDrawable();
-    focusedBg.setColor(0x80FFFFFF);
-    focusedBg.setCornerRadius(dp(8));
-    focusedBg.setStroke(dp(2), Color.WHITE);
-    iv.setBackground(normalBg);
-
-    // Reuses your existing focus animation; null/null = not an app or TV input
-    iv.setTag(new TileAction(null, null, "Lesson", normalBg, focusedBg));
-    iv.setOnFocusChangeListener(this);
-    iv.setOnClickListener(new View.OnClickListener() {
-        @Override public void onClick(View v) {
-            if (reorderPackage != null) return;
-            try {
-                int lesson = LessonImageFetcher.currentLesson();
-                startActivity(new Intent(Intent.ACTION_VIEW,
-                        Uri.parse(LessonImageFetcher.buildUrl(lesson))));
-            } catch (Exception e) {
-                Toast.makeText(MainActivity.this, "Can't open lesson", Toast.LENGTH_SHORT).show();
+                canvas.save();
+                canvas.clipPath(clipPath);
+                super.onDraw(canvas);
+                canvas.restore();
             }
-        }
-    });
+        };
+        iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        iv.setPadding(dp(3), dp(3), dp(3), dp(3));
+        iv.setFocusable(true);
+        iv.setClickable(true);
 
-    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(240), dp(135));
-    iv.setLayoutParams(lp);
-    return iv;
-}
+        GradientDrawable normalBg = new GradientDrawable();
+        normalBg.setColor(0x33FFFFFF);
+        normalBg.setCornerRadius(dp(8));
+        GradientDrawable focusedBg = new GradientDrawable();
+        focusedBg.setColor(0x80FFFFFF);
+        focusedBg.setCornerRadius(dp(8));
+        focusedBg.setStroke(dp(2), Color.WHITE);
+        iv.setBackground(normalBg);
 
-private void loadLessonImage() {
-    final int lesson = LessonImageFetcher.currentLesson();
-    if (lesson == loadedLesson) return; // already showing this week's lesson
-
-    executor.execute(new Runnable() {
-        @Override public void run() {
-            try {
-                File cacheFile = new File(getCacheDir(), "lesson_" + lesson + ".jpg");
-                String titleKey = "lesson_title_" + lesson;
-                Bitmap bmp = cacheFile.exists()
-                        ? BitmapFactory.decodeFile(cacheFile.getAbsolutePath()) : null;
-                String title = getSharedPreferences(PREFS, MODE_PRIVATE).getString(titleKey, null);
-
-                if (bmp == null || title == null) {
-                    LessonImageFetcher.Lesson fetched = LessonImageFetcher.fetchLesson(lesson, false);
-                    bmp = fetched.image;
-                    title = fetched.title;
-
-                    FileOutputStream out = new FileOutputStream(cacheFile);
-                    try {
-                        bmp.compress(Bitmap.CompressFormat.JPEG, 95, out);
-                    } finally {
-                        out.close();
-                    }
-                    if (title != null) {
-                        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                                .putString(titleKey, title).apply();
-                    }
+        // Reuses your existing focus animation; null/null = not an app or TV input
+        iv.setTag(new TileAction(null, null, "Lesson", normalBg, focusedBg));
+        iv.setOnFocusChangeListener(this);
+        iv.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                if (reorderPackage != null) return;
+                try {
+                    int lesson = LessonImageFetcher.currentLesson();
+                    startActivity(new Intent(Intent.ACTION_VIEW,
+                            Uri.parse(LessonImageFetcher.buildUrl(lesson))));
+                } catch (Exception e) {
+                    Toast.makeText(MainActivity.this, "Can't open lesson", Toast.LENGTH_SHORT).show();
                 }
-
-                final Bitmap resultImage = bmp;
-                final String resultTitle = title;
-                runOnUiThread(new Runnable() {
-                    @Override public void run() {
-                        if (isFinishing()) return;
-                        lessonImageView.setImageBitmap(resultImage);
-                        lessonHeader.setText(resultTitle != null
-                                ? "This Week's Lesson: " + resultTitle
-                                : "This Week's Lesson");
-                        loadedLesson = lesson;
-                    }
-                });
-            } catch (Exception e) {
-                e.printStackTrace(); // loadedLesson stays -1, so it retries next onResume
             }
-        }
-    });
-}
+        });
 
-@Override
-protected void onDestroy() {
-    super.onDestroy();
-    executor.shutdownNow();
-}
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(240), dp(135));
+        iv.setLayoutParams(lp);
+        return iv;
+    }
+
+    private void loadLessonImage() {
+        final int lesson = LessonImageFetcher.currentLesson();
+        if (lesson == loadedLesson) return; // already showing this week's lesson
+
+        executor.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    File cacheFile = new File(getCacheDir(), "lesson_" + lesson + ".jpg");
+                    String titleKey = "lesson_title_" + lesson;
+                    Bitmap bmp = cacheFile.exists()
+                            ? BitmapFactory.decodeFile(cacheFile.getAbsolutePath()) : null;
+                    String title = getSharedPreferences(PREFS, MODE_PRIVATE).getString(titleKey, null);
+
+                    if (bmp == null || title == null) {
+                        LessonImageFetcher.Lesson fetched = LessonImageFetcher.fetchLesson(lesson, false);
+                        bmp = fetched.image;
+                        title = fetched.title;
+
+                        FileOutputStream out = new FileOutputStream(cacheFile);
+                        try {
+                            bmp.compress(Bitmap.CompressFormat.JPEG, 95, out);
+                        } finally {
+                            out.close();
+                        }
+                        if (title != null) {
+                            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                                    .putString(titleKey, title).apply();
+                        }
+                    }
+
+                    final Bitmap resultImage = bmp;
+                    final String resultTitle = title;
+                    runOnUiThread(new Runnable() {
+                        @Override public void run() {
+                            if (isFinishing()) return;
+                            lessonImageView.setImageBitmap(resultImage);
+                            lessonHeader.setText(resultTitle != null
+                                    ? "This Week's Lesson: " + resultTitle
+                                    : "This Week's Lesson");
+                            loadedLesson = lesson;
+                        }
+                    });
+                } catch (Exception e) {
+                    e.printStackTrace(); // loadedLesson stays -1, so it retries next onResume
+                }
+            }
+        });
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        executor.shutdownNow();
+    }
 
     @Override
     public void onBackPressed() {

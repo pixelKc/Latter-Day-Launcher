@@ -1,6 +1,6 @@
 {
-  "versionCode": 2,
-  "versionName": "1.0.1",
-  "apkUrl": "https://github.com/pixelKc/Latter-Day-Launcher/releases/download/1.0.1/LatterDayLauncher.apk",
-  "releaseNotes": "Added 2027 manual for the come follow me widget."
+  "versionCode": 3,
+  "versionName": "1.0.2",
+  "apkUrl": "https://github.com/pixelKc/Latter-Day-Launcher/releases/download/1.0.2/LatterDayLauncher.apk",
+  "releaseNotes": "Added reordering for TV inputs."
 }
