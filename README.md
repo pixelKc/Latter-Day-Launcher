@@ -11,7 +11,5 @@ Now test it, press the home button on your TV remote.
 ## Screenshots
 ![Screnshot](screenshots/comefollowme_screenshot.png)
 ![Screnshot](screenshots/appsrow_screenshot.png)
-## AI Disclaimer
-AI was used to build most of this app.
 ### Bug Reporting
 Notice a bug? Report it at <a href="https://github.com/pixelKc/Latter-Day-Launcher/issues">https://github.com/pixelKc/Latter-Day-Launcher/issues</a>
