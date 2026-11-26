@@ -56,7 +56,7 @@ public class MainActivity extends Activity implements Runnable, View.OnClickList
     private static final String PREFS = "launcher_prefs";
     private static final String KEY_ORDER = "app_order";
     private static final int REORDER_COLOR = 0xFF3D7BFF;
-    private static final boolean DEBUG = true;
+    private static final boolean DEBUG = false;
 
     private ImageView bgImageView;
     private LinearLayout inputsRow;
